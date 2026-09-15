@@ -210,8 +210,8 @@ SELECT lives_ok(
 RESET pgstac.additional_properties;
 
 SELECT lives_ok(
-    $$ SELECT create_item('{"id":"pgstac-test-item-dotted","type":"Feature","collection":"pgstac-test-collection","geometry":{"type":"Point","coordinates":[0,0]},"bbox":[0,0,0,0],"properties":{"datetime":"2011-08-25T00:00:00Z","a.b":"x","test:a.b.c":"y","test:detail.value":1.5},"assets":{},"links":[],"stac_version":"1.0.0"}'); $$,
-    'Create item for dotted queryable index tests.'
+    $$ SELECT create_item('{"id":"pgstac-test-item-dotted","type":"Feature","collection":"pgstac-test-collection","geometry":{"type":"Point","coordinates":[0,0]},"bbox":[0,0,0,0],"properties":{"datetime":"2011-08-25T00:00:00Z","a":{"b":"x"},"test:a":{"b":{"c":"y"}},"test:detail":{"value":1.5},"test:prop":"zz"},"assets":{},"links":[],"stac_version":"1.0.0"}'); $$,
+    'Create item with genuinely nested properties for dotted queryable index tests.'
 );
 
 SELECT lives_ok(
@@ -242,24 +242,38 @@ SELECT results_eq(
 SELECT is_empty(
     $$ SELECT field FROM queryable_indexes('items', true)
        WHERE field IN ('a.b', 'test:a.b.c', 'test:detail.value', 'test:prop'); $$,
-    'queryable_indexes(changes:=true) finds no changes for matching defs.'
-);
-
-
-SELECT results_eq(
-    $q$ SELECT substring(
-            $i$CREATE INDEX ON pgstac._items_1 USING btree (to_float((properties -> 'test:detail.value'::text)))$i$,
-            'properties -> ''([^'']+)''::text'
-        ); $q$,
-    $$ SELECT 'test:detail.value'; $$,
-    'Extraction captures full dotted property names from split properties indexes.'
+    'queryable_indexes(changes:=true) finds no changes for matching defs (no perpetual reindex churn).'
 );
 
 SELECT results_eq(
-    $q$ SELECT substring(
-            $i$CREATE INDEX ON pgstac._items_1 USING btree (to_float(((content -> 'properties'::text) -> 'test:detail.value'::text)))$i$,
-            '\(content -> ''properties''::text\) -> ''([^'']+)''::text'
-        ); $q$,
+    $$ SELECT indexdef(q) FROM queryables q
+       WHERE q.name = 'test:detail.value' AND q.collection_ids = '{pgstac-test-collection}'; $$,
+    $q$ SELECT 'CREATE INDEX ON %I USING btree (to_float(((properties -> ''test:detail''::text) -> ''value''::text)))'; $q$,
+    'indexdef() resolves a 2-segment dotted queryable to a genuinely nested jsonb path.'
+);
+
+SELECT results_eq(
+    $$ SELECT indexdef(q) FROM queryables q
+       WHERE q.name = 'test:a.b.c' AND q.collection_ids = '{pgstac-test-collection}'; $$,
+    $q$ SELECT 'CREATE INDEX ON %I USING btree (to_text((((properties -> ''test:a''::text) -> ''b''::text) -> ''c''::text)))'; $q$,
+    'indexdef() resolves a 3-segment dotted queryable to a genuinely nested jsonb path.'
+);
+
+SELECT results_eq(
+    $$ SELECT to_float(properties->'test:detail'->'value')
+       FROM items WHERE id = 'pgstac-test-item-dotted'; $$,
+    $$ SELECT 1.5::float; $$,
+    'The generated index expression resolves against real nested JSON, not NULL (issue #483).'
+);
+
+SELECT results_eq(
+    $q$ SELECT indexdef_field($i$CREATE INDEX ON pgstac._items_1 USING btree (to_float(((properties -> 'test:detail'::text) -> 'value'::text)))$i$); $q$,
     $$ SELECT 'test:detail.value'; $$,
-    'Legacy content->properties extraction captures dotted names.'
+    'indexdef_field() reconstructs multi-segment dotted names from the split-properties chain.'
+);
+
+SELECT results_eq(
+    $q$ SELECT indexdef_field($i$CREATE INDEX ON pgstac._items_1 USING btree (to_float(((content -> 'properties'::text) -> 'test:detail.value'::text)))$i$); $q$,
+    $$ SELECT 'test:detail.value'; $$,
+    'indexdef_field() still recognizes the legacy content->properties extraction and is not confused by the new chain shape.'
 );

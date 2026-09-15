@@ -141,8 +141,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - `flake8`, `black`, and `mypy` removed from dev dependencies.
 
 ### Fixed
-- Recognize existing indexes for queryable property names that contain dots (e.g. `test:detail.value`), so `maintain_partitions()` no longer creates duplicate indexes on every queryables reload.
-- Generate JSON property indexes against the split `properties` column instead of the removed `content` column.
+- Introduce handling for dotted (`.`) queryable property names, so indexes on nested properties like `test:detail.value` are built and recognized correctly instead of targeting a flat, always-`NULL` key (#483).
 - Explicit search stats refresh now propagates through cached and uncached search paths when `updatestats` is requested, keeping `numberMatched`/context counts current.
 - `scripts/container-scripts/test` now refreshes collation metadata for the
   `postgres` database during setup to avoid noisy warning output.
